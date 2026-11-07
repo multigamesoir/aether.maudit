@@ -98,8 +98,8 @@ function admFail(ip){const now=Date.now();if(now-admFailG.t>15*60e3)admFailG.n=0
 function admAuth(req){const t=String(req.headers['x-admin-token']||'');const e=adminSessions.get(t);if(!e)return false;if(Date.now()>e){adminSessions.delete(t);return false}return true}
 /* Catalogue utilisé par le panneau admin (à compléter quand tu ajoutes un héros / monstre / sort au jeu) : [identifiant, nom, prix] */
 const CATALOG={
-  heroes:[['el',"Soldat d'Élite",50],['ar','Archer',75],['wa','Apprenti Sorcier',100],['dr','Druide',150],['che','Chevalier',250],['fi','Sorcier de feu',300],['xb','Arbalétrier',400],['li','Sorcier de foudre',500],['pa','Paladin',600],['nb','Assassin Magique',800],['kh','Héros Chevalier',800],['vi','Viking',800],['kg','Roi',1000],['sw','Spearwoman (Unique)',null]],
-  monsters:[[2,'Chauve-souris',50],[1,'Étourdisseur',80],[10,'Oeil volant',80],[11,'Sporeux',100],[9,'Squelette',100],[18,'Gobelin Élite',100],[15,'Slime',250],[14,'Mimic',300],[12,'Invocateur',400],[13,'Général',500],[19,'Nécromancien',500],[4,'Golem de glace',700],[21,'Bourreau',900],[17,'Guardian',1000],[23,'Le Maudit',600],[24,'Aether (Unique)',null]],
+  heroes:[['el',"Soldat d'Élite",50],['ar','Archer',75],['wa','Apprenti Sorcier',100],['eb','Ebony',100],['dr','Druide',150],['che','Chevalier',250],['fi','Sorcier de feu',300],['xb','Arbalétrier',400],['li','Sorcier de foudre',500],['pa','Paladin',600],['nb','Assassin Magique',800],['kh','Héros Chevalier',800],['vi','Viking',800],['kg','Roi',1000],['sw','Manatrice (Unique)',null]],
+  monsters:[[2,'Chauve-souris',50],[1,'Étourdisseur',80],[10,'Oeil volant',80],[11,'Sporeux',100],[9,'Squelette',100],[18,'Gobelin Élite',100],[15,'Slime',250],[14,'Mimic',300],[12,'Invocateur',400],[25,'Armée Squelette',400],[13,'Général',500],[19,'Nécromancien',500],[4,'Golem de glace',700],[21,'Bourreau',900],[17,'Guardian',1000],[23,'Le Maudit',600],[24,'Aether (Unique)',null]],
   spells:[[0,'Foudre',100],[1,'Nécromancie',600]],
   equip:[[0,'Potion de soin',150],[1,'Cristal de rapidité',150]],
   levels:15,arMax:10};
