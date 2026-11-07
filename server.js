@@ -27,6 +27,10 @@ console.log('Stockage des comptes :',store.kind);
 /* Skins (réglés depuis l'admin, comme le Glow) : tour = obélisque, archer = archer de la charrette */
 const TSKINS=['blood','crystal'],ASKINS=['arcane'];
 const skinsOf=a=>({tskin:TSKINS.includes(a.tskin)?a.tskin:'',askin:ASKINS.includes(a.askin)?a.askin:''});
+/* Styles de pseudo (réglés depuis l'admin) : glow | hell (Enfer) | plat (Platine) | admin. '' = aucun. L'ancien true = glow */
+const NSTYLES=['glow','hell','plat','admin'];
+const nsIn=v=>v===true?'glow':(NSTYLES.includes(v)?v:'');
+const gs=a=>nsIn(a&&a.glow);
 const sessions=new Map(); // token -> key
 const fails=new Map();    // ip -> {n,t}
 const hashPw=(pw,salt)=>crypto.scryptSync(String(pw),salt,32).toString('hex');
@@ -57,7 +61,7 @@ async function api(req,res,u){
         if(a.length!=h.length||!crypto.timingSafeEqual(a,h)){fail(ip);return json(res,401,{err:'Mot de passe incorrect.'})}
       }
       const token=crypto.randomBytes(18).toString('hex');sessions.set(token,key);
-      return json(res,200,{ok:1,name:acc.name,token,save:acc.save,gifts:acc.pend||[],created:u=='/api/register',glow:!!acc.glow,...skinsOf(acc)});
+      return json(res,200,{ok:1,name:acc.name,token,save:acc.save,gifts:acc.pend||[],created:u=='/api/register',glow:gs(acc),...skinsOf(acc)});
     }
     if(u=='/api/save'){
       const key=sessions.get(String(b.token||''));if(!key)return json(res,401,{err:'Session expirée'});
@@ -66,12 +70,12 @@ async function api(req,res,u){
         const acc=await store.get(key);if(!acc)return json(res,404,{err:'Compte introuvable'});
         acc.save=b.save;
         if(Array.isArray(b.ack)&&acc.pend&&acc.pend.length){const ak=new Set(b.ack.filter(x=>typeof x=='string'));acc.pend=acc.pend.filter(g=>!ak.has(g.id))}
-        await store.set(key,acc);return json(res,200,{ok:1,gifts:acc.pend||[],glow:!!acc.glow,...skinsOf(acc)})});
+        await store.set(key,acc);return json(res,200,{ok:1,gifts:acc.pend||[],glow:gs(acc),...skinsOf(acc)})});
     }
     if(u=='/api/gifts'){
       const key=sessions.get(String(b.token||''));if(!key)return json(res,401,{err:'Session expirée'});
       const acc=await store.get(key);if(!acc)return json(res,404,{err:'Compte introuvable'});
-      return json(res,200,{ok:1,gifts:acc.pend||[],glow:!!acc.glow,...skinsOf(acc)});
+      return json(res,200,{ok:1,gifts:acc.pend||[],glow:gs(acc),...skinsOf(acc)});
     }
     return json(res,404,{err:'Inconnu'});
   }catch(e){console.error('api',e.message);return json(res,500,{err:'Erreur serveur'})}
@@ -130,7 +134,7 @@ async function adminApi(req,res,u){
     if(u=='/api/admin/list'){
       const ks=await store.keys(),all=await store.getMany(ks),rows=[];
       for(const k of ks){const a=all[k];if(!a)continue;const s=(a.save&&a.save.s)||{};
-        rows.push({name:a.name||k,created:a.created||0,ts:(a.save&&a.save.ts)||0,coins:Math.round(+s.coins||0),heroes:Object.keys(s.heroOwned||{}).length,pend:(a.pend||[]).length,glow:!!a.glow})}
+        rows.push({name:a.name||k,created:a.created||0,ts:(a.save&&a.save.ts)||0,coins:Math.round(+s.coins||0),heroes:Object.keys(s.heroOwned||{}).length,pend:(a.pend||[]).length,glow:gs(a)})}
       rows.sort((x,y)=>y.ts-x.ts||x.name.localeCompare(y.name));
       return json(res,200,{ok:1,accounts:rows});
     }
@@ -138,18 +142,18 @@ async function adminApi(req,res,u){
     if(!okName(name))return json(res,400,{err:'Pseudo invalide'});
     if(u=='/api/admin/get'){
       const a=await store.get(key);if(!a)return json(res,404,{err:'Compte introuvable'});
-      return json(res,200,{ok:1,name:a.name,created:a.created||0,save:a.save||null,pend:a.pend||[],glow:!!a.glow,...skinsOf(a)});
+      return json(res,200,{ok:1,name:a.name,created:a.created||0,save:a.save||null,pend:a.pend||[],glow:gs(a),...skinsOf(a)});
     }
     if(u=='/api/admin/create'){ // création de compte forcée (aucune limite)
       const pw=String(b.pass||'');if(pw.length<4||pw.length>64)return json(res,400,{err:'Mot de passe : 4 à 64 caractères.'});
       return await withLock(key,async()=>{if(await store.get(key))return json(res,409,{err:'Ce pseudo existe déjà.'});
         const salt=crypto.randomBytes(16).toString('hex');
-        await store.set(key,{name,salt,hash:hashPw(pw,salt),save:null,pend:[],created:Date.now(),glow:!!b.glow});
+        await store.set(key,{name,salt,hash:hashPw(pw,salt),save:null,pend:[],created:Date.now(),glow:nsIn(b.glow)});
         return json(res,200,{ok:1,name})});
     }
     if(u=='/api/admin/setglow'){ // Glow Mode du pseudo
       return await withLock(key,async()=>{const a=await store.get(key);if(!a)return json(res,404,{err:'Compte introuvable'});
-        a.glow=!!b.glow;await store.set(key,a);return json(res,200,{ok:1,glow:a.glow})});
+        a.glow=nsIn(b.glow);await store.set(key,a);return json(res,200,{ok:1,glow:a.glow})});
     }
     if(u=='/api/admin/setskin'){ // skins de tour / d'archer ('' = skin par défaut)
       const t=String(b.tskin||''),ar=String(b.askin||'');
@@ -209,6 +213,27 @@ h2{font-size:16px;margin:0 0 6px}h3{font-size:14px;margin:16px 0 6px;color:var(-
 .gn-glow{font-weight:800;background:linear-gradient(90deg,#ffe27a,#ff7ad9,#7fa8ff,#7dffd0,#ffe27a);background-size:300% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;-webkit-text-fill-color:transparent;animation:gnSlide 3s linear infinite,gnPulse 1.6s ease-in-out infinite alternate}
 @keyframes gnSlide{to{background-position:300% 0}}
 @keyframes gnPulse{from{filter:drop-shadow(0 0 2px #ffe27a) drop-shadow(0 0 5px #7fa8ff)}to{filter:drop-shadow(0 0 5px #ff7ad9) drop-shadow(0 0 12px #7dffd0)}}
+/* ENFER MODE : texte rouge-feu + aura rougeatre qui vacille */
+.gn-hell{font-weight:800;background:linear-gradient(180deg,#ffe45a 0%,#ff7a00 38%,#e01a0a 72%,#7a0606 100%);background-size:100% 220%;-webkit-background-clip:text;background-clip:text;color:transparent!important;-webkit-text-fill-color:transparent;padding:2px 4px;animation:hellFlame .9s ease-in-out infinite alternate,hellAura 1.3s ease-in-out infinite alternate}
+@keyframes hellFlame{from{background-position:0 0}to{background-position:0 100%}}
+@keyframes hellAura{0%{filter:drop-shadow(0 0 2px #ff2000) drop-shadow(0 -2px 6px #ff5a00)}50%{filter:drop-shadow(0 0 5px #ff1a00) drop-shadow(0 -4px 11px #ff7a00)}100%{filter:drop-shadow(0 0 3px #ff2a00) drop-shadow(0 -6px 14px #ff3a00)}}
+/* PLATINE MODE : reflet diamant platine qui balaie le pseudo + eclat */
+.gn-plat{position:relative;display:inline-block;font-weight:800;letter-spacing:.06em;background:linear-gradient(105deg,#8f9db3 0%,#e9f1ff 18%,#b9c9e0 32%,#ffffff 48%,#8ec5f5 62%,#e6eefb 78%,#9aa9bf 100%);background-size:260% 100%;-webkit-background-clip:text;background-clip:text;color:transparent!important;-webkit-text-fill-color:transparent;padding:2px 14px 2px 4px;animation:platShine 3.2s linear infinite,platGlow 2.2s ease-in-out infinite alternate}
+.gn-plat::after{content:"\25C6";position:absolute;right:1px;top:-2px;font-size:.6em;animation:platTwk 1.6s ease-in-out infinite}
+@keyframes platShine{from{background-position:130% 0}to{background-position:-130% 0}}
+@keyframes platGlow{from{filter:drop-shadow(0 0 2px #bfeaff) drop-shadow(0 0 5px #8fc8ff)}to{filter:drop-shadow(0 0 4px #ffffff) drop-shadow(0 0 11px #7fd8ff)}}
+@keyframes platTwk{0%,100%{opacity:.25;transform:scale(.7) rotate(0)}50%{opacity:1;transform:scale(1.15) rotate(45deg)}}
+/* ADMIN MODE : glitch + changement de couleur + badge ADMIN rouge */
+.gn-admin{position:relative;display:inline-block;font-weight:800;animation:admCol 2.4s steps(1) infinite,admJit 2.8s infinite steps(1)}
+.gn-admin::before,.gn-admin::after{content:attr(data-t);position:absolute;left:0;top:0;width:100%;overflow:hidden;white-space:nowrap}
+.gn-admin::before{color:#ff2a4a;animation:admG1 1.7s infinite steps(1)}
+.gn-admin::after{color:#22e6ff;animation:admG2 1.3s infinite steps(1)}
+@keyframes admCol{0%{color:#fff;text-shadow:0 0 6px #fff}25%{color:#ff3b4e;text-shadow:0 0 8px #ff3b4e}50%{color:#ffd0d4;text-shadow:0 0 6px #ff8a99}75%{color:#ff7a3b;text-shadow:0 0 8px #ff7a3b}}
+@keyframes admJit{0%,88%,100%{transform:translate(0,0)}90%{transform:translate(-2px,1px)}94%{transform:translate(2px,-1px)}97%{transform:translate(-1px,0)}}
+@keyframes admG1{0%{clip-path:inset(0 0 100% 0);transform:translate(0,0)}8%{clip-path:inset(12% 0 62% 0);transform:translate(3px,0)}16%{clip-path:inset(0 0 100% 0)}40%{clip-path:inset(55% 0 20% 0);transform:translate(-3px,0)}48%{clip-path:inset(0 0 100% 0)}78%{clip-path:inset(30% 0 45% 0);transform:translate(2px,1px)}86%,100%{clip-path:inset(0 0 100% 0)}}
+@keyframes admG2{0%{clip-path:inset(100% 0 0 0)}12%{clip-path:inset(60% 0 12% 0);transform:translate(-3px,0)}22%{clip-path:inset(100% 0 0 0)}52%{clip-path:inset(18% 0 55% 0);transform:translate(3px,0)}60%{clip-path:inset(100% 0 0 0)}84%{clip-path:inset(70% 0 5% 0);transform:translate(-2px,-1px)}92%,100%{clip-path:inset(100% 0 0 0)}}
+.adm-badge{display:inline-block;margin-left:6px;padding:1px 5px;font-size:.55em;font-weight:900;letter-spacing:.08em;line-height:1.5;color:#fff;-webkit-text-fill-color:#fff;background:#d4122a;border-radius:3px;vertical-align:middle;box-shadow:0 0 7px #ff1a3a;animation:admBdg 1.4s ease-in-out infinite alternate}
+@keyframes admBdg{from{box-shadow:0 0 4px #ff1a3a}to{box-shadow:0 0 11px #ff4a5a}}
 .glowbox{display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:10px 12px;background:#0e0c20;border:1px solid var(--line);border-radius:8px}
 .glowbox .chk{border:0;padding:0;background:none}
 .create{margin-top:10px;display:grid;gap:6px}
@@ -227,6 +252,10 @@ function login(msg){$('app').innerHTML='';var pw=h('input',{type:'password',plac
  $('app').appendChild(h('div',{class:'box login'},[h('h2',{text:'Aethergard - Administration'}),h('p',{class:'mut',text:'Acc\u00e8s r\u00e9serv\u00e9.'}),pw,h('div',{style:'height:10px'}),h('button',{class:'p',text:'Connexion',onclick:go}),er]));pw.focus()}
 function logout(){call('/api/admin/logout').catch(function(){});TOKEN='';sessionStorage.removeItem('adm');login('')}
 function fmt(t){return t?new Date(t).toLocaleString('fr-FR'):'jamais'}
+var NS=[['','Aucun'],['glow','Glow Mode'],['hell','Enfer Mode'],['plat','Platine Mode'],['admin','Admin Mode']];
+function nsv(g){return g===true?'glow':(g=='glow'||g=='hell'||g=='plat'||g=='admin'?g:'')}
+function nsEl(name,g,css){g=nsv(g);var w=h('span',{style:css||''});if(!g){w.textContent=name;return w}
+ var s=h('span',{class:'gn-'+g,text:name});if(g=='admin')s.setAttribute('data-t',name);w.appendChild(s);if(g=='admin')w.appendChild(h('span',{class:'adm-badge',text:'ADMIN'}));return w}
 function nm(tab,id){var L=tab=='h'?CAT.heroes:CAT.monsters;for(var i=0;i<L.length;i++)if(String(L[i][0])==String(id))return L[i][1];return id}
 function opText(o){var k=o[0];
  if(k=='add')return(o[2]>0?'+':'')+o[2]+' '+({coins:'pi\u00e8ces',acoins:'pi\u00e8ces Aether',kKeys:'cl\u00e9s',ARL:'niv. archer',OBL:'niv. ob\u00e9lisque',AUP:'puissance monstres'})[o[1]];
@@ -250,10 +279,10 @@ function main(){var a=$('app');a.innerHTML='';
  a.appendChild(h('div',{class:'wrap'},[left,right]));loadList(false)}
 function createBox(){
  var nameI=h('input',{type:'text',placeholder:'Pseudo (3-12 caract\u00e8res)',maxlength:'12',autocomplete:'off'}),passI=h('input',{type:'text',placeholder:'Mot de passe (4 minimum)',autocomplete:'off'}),
-  gcb=h('input',{type:'checkbox'}),er=h('div',{class:'err',style:'min-height:0;font-size:13px'}),form=h('div',{class:'create',style:'display:none'});
- var glab=h('label',{class:'chk'},[gcb,document.createTextNode('Glow Mode d\u00e8s la cr\u00e9ation')]);
+  gcb=h('select',{}),er=h('div',{class:'err',style:'min-height:0;font-size:13px'}),form=h('div',{class:'create',style:'display:none'});NS.forEach(function(o){gcb.appendChild(h('option',{value:o[0],text:o[1]}))});
+ var glab=h('label',{class:'chk'},[document.createTextNode('Style du pseudo d\u00e8s la cr\u00e9ation : '),gcb]);
  var go=h('button',{class:'p',text:'Cr\u00e9er le compte',onclick:function(){var nm0=nameI.value.trim();er.style.color='#ffd45a';er.textContent='Cr\u00e9ation...';
-  call('/api/admin/create',{name:nm0,pass:passI.value,glow:gcb.checked}).then(function(j){er.style.color='#3ecf6e';er.textContent='Compte "'+j.name+'" cr\u00e9\u00e9 !';nameI.value='';passI.value='';gcb.checked=false;
+  call('/api/admin/create',{name:nm0,pass:passI.value,glow:gcb.value}).then(function(j){er.style.color='#3ecf6e';er.textContent='Compte "'+j.name+'" cr\u00e9\u00e9 !';nameI.value='';passI.value='';gcb.value='';
    return call('/api/admin/list').then(function(l){ACCS=l.accounts;renderList('');openAcc(j.name)})}).catch(function(e){er.style.color='#ff5a6a';er.textContent=e.message})}});
  form.appendChild(nameI);form.appendChild(passI);form.appendChild(glab);form.appendChild(go);form.appendChild(er);
  var tg=h('button',{class:'s p',text:'+ Cr\u00e9er un compte (forc\u00e9)',onclick:function(){form.style.display=form.style.display=='none'?'grid':'none'}});
@@ -261,7 +290,7 @@ function createBox(){
 function loadList(keep){call('/api/admin/list').then(function(j){ACCS=j.accounts;renderList('');if(keep&&CUR)openAcc(CUR)}).catch(function(e){$('list').textContent=e.message})}
 function renderList(q){var L=$('list');L.innerHTML='';q=(q||'').toLowerCase();var n=0;
  ACCS.forEach(function(c){if(q&&c.name.toLowerCase().indexOf(q)<0)return;n++;
-  var r=h('div',{class:'row'+(CUR==c.name.toLowerCase()?' sel':'')},[h('b',{class:c.glow?'gn-glow':'',text:c.name}),h('span',{text:c.coins+' pi\u00e8ces - '+c.heroes+' h\u00e9ros - '+fmt(c.ts)+(c.pend?' - '+c.pend+' en attente':'')})]);
+  var r=h('div',{class:'row'+(CUR==c.name.toLowerCase()?' sel':'')},[h('b',{},[nsEl(c.name,c.glow)]),h('span',{text:c.coins+' pi\u00e8ces - '+c.heroes+' h\u00e9ros - '+fmt(c.ts)+(c.pend?' - '+c.pend+' en attente':'')})]);
   r.onclick=function(){openAcc(c.name)};L.appendChild(r)});
  if(!n)L.appendChild(h('p',{class:'mut',text:ACCS.length?'Aucun r\u00e9sultat.':'Aucun compte pour le moment.'}))}
 function openAcc(name){CUR=name.toLowerCase();renderList('');$('detail').innerHTML='Chargement...';
@@ -276,15 +305,16 @@ function chkBlock(title,items,owned,key){
  bar.appendChild(h('button',{class:'s',text:'Tout d\u00e9cocher',onclick:function(){boxes.forEach(function(b){b.cb.checked=false;b.cb.onchange()})}}));
  box.appendChild(bar);box.appendChild(grid);INIT[key]=boxes;return box}
 function detail(){var d=$('detail');d.innerHTML='';INIT={};var s=effective(),pend=DATA.pend||[];
- d.appendChild(h('h2',{class:DATA.glow?'gn-glow':'',text:DATA.name}));
+ d.appendChild(h('h2',{},[nsEl(DATA.name,DATA.glow)]));
  d.appendChild(h('p',{class:'mut',text:'Cr\u00e9\u00e9 : '+fmt(DATA.created)+' - Derni\u00e8re sauvegarde : '+(DATA.save?fmt(DATA.save.ts):'aucune')}));
  d.appendChild(h('div',{class:'info',text:'Les modifications sont appliqu\u00e9es au prochain lancement du jeu du joueur, ou dans environ 20 secondes s\u2019il est d\u00e9j\u00e0 connect\u00e9. Les valeurs ci-dessous incluent les cadeaux d\u00e9j\u00e0 en attente.'}));
  if(!DATA.save)d.appendChild(h('div',{class:'warn',text:'Ce compte n\u2019a pas encore de sauvegarde en ligne (le joueur ne s\u2019est pas encore connect\u00e9 avec une partie).'}));
  d.appendChild(h('h3',{text:'Pseudo'}));
- var gcb=h('input',{type:'checkbox'}),gprev=h('span',{class:DATA.glow?'gn-glow':'',text:DATA.name,style:'font-size:18px'}),gmsg=h('span',{class:'mut',style:'font-size:13px'});gcb.checked=!!DATA.glow;
- gcb.onchange=function(){gcb.disabled=true;gmsg.textContent='Enregistrement...';call('/api/admin/setglow',{name:DATA.name,glow:gcb.checked}).then(function(j){DATA.glow=j.glow;gprev.className=j.glow?'gn-glow':'';gmsg.style.color='#3ecf6e';gmsg.textContent=j.glow?'Glow Mode activ\u00e9 (visible en jeu d\u2019ici ~20 s)':'Glow Mode d\u00e9sactiv\u00e9';gcb.disabled=false;
-   for(var i=0;i<ACCS.length;i++)if(ACCS[i].name.toLowerCase()==CUR)ACCS[i].glow=j.glow;renderList('')}).catch(function(e){gcb.checked=!gcb.checked;gcb.disabled=false;alert(e.message)})};
- d.appendChild(h('div',{class:'glowbox'},[h('label',{class:'chk'},[gcb,document.createTextNode('Glow Mode (pseudo en surbrillance)')]),gprev,gmsg]));
+ var gsel=h('select',{}),gprev=h('span',{style:'font-size:18px;min-width:150px'},[nsEl(DATA.name,DATA.glow)]),gmsg=h('span',{class:'mut',style:'font-size:13px'});
+ NS.forEach(function(o){var op=h('option',{value:o[0],text:o[1]});if(o[0]==nsv(DATA.glow))op.selected=true;gsel.appendChild(op)});
+ gsel.onchange=function(){var old=nsv(DATA.glow);gsel.disabled=true;gmsg.style.color='';gmsg.textContent='Enregistrement...';call('/api/admin/setglow',{name:DATA.name,glow:gsel.value}).then(function(j){DATA.glow=nsv(j.glow);gprev.innerHTML='';gprev.appendChild(nsEl(DATA.name,DATA.glow));gmsg.style.color='#3ecf6e';gmsg.textContent=DATA.glow?'Style activ\u00e9 (visible en jeu d\u2019ici ~20 s)':'Style d\u00e9sactiv\u00e9';gsel.disabled=false;
+   for(var i=0;i<ACCS.length;i++)if(ACCS[i].name.toLowerCase()==CUR)ACCS[i].glow=DATA.glow;renderList('')}).catch(function(e){gsel.value=old;gsel.disabled=false;gmsg.textContent='';alert(e.message)})};
+ d.appendChild(h('div',{class:'glowbox'},[h('b',{text:'Style du pseudo'}),gsel,gprev,gmsg]));
  function skSel(label,opts,field){var sel=h('select',{}),msg=h('span',{class:'mut',style:'font-size:13px'});
   opts.forEach(function(o){var op=h('option',{value:o[0],text:o[1]});if(o[0]==(DATA[field]||''))op.selected=true;sel.appendChild(op)});
   sel.onchange=function(){sel.disabled=true;msg.style.color='';msg.textContent='Enregistrement...';var body={name:DATA.name,tskin:DATA.tskin||'',askin:DATA.askin||''};body[field]=sel.value;
