@@ -1419,6 +1419,9 @@ const load=s=>new Promise(r=>{const i=new Image();i.onload=()=>r(i);i.src=s});
 #pv,#pv *,#pv-quit,#pv-acc,#pv-toast{box-sizing:border-box;font-family:"Press Start 2P",monospace}
 #pv-acc{position:fixed;z-index:40;left:8px;bottom:calc(8px + env(safe-area-inset-bottom,0px));display:none;background:rgba(14,10,46,.88);border:2px solid #5a4fcf;color:#e8e0ff;padding:7px 9px;font-size:7px}
 #pv-acc.on{display:block}
+.gn-glow{background:linear-gradient(90deg,#ffe27a,#ff7ad9,#7fa8ff,#7dffd0,#ffe27a);background-size:300% 100%;-webkit-background-clip:text;background-clip:text;color:transparent!important;-webkit-text-fill-color:transparent;animation:gnSlide 3s linear infinite,gnPulse 1.6s ease-in-out infinite alternate;padding:2px 4px}
+@keyframes gnSlide{to{background-position:300% 0}}
+@keyframes gnPulse{from{filter:drop-shadow(0 0 2px #ffe27a) drop-shadow(0 0 5px #7fa8ff)}to{filter:drop-shadow(0 0 5px #ff7ad9) drop-shadow(0 0 12px #7dffd0)}}
 #pv-acc button{margin-left:6px;background:#a82a3a;color:#fff;border:0;padding:5px 6px;font-size:6px;cursor:pointer;font-family:inherit}
 #pv{position:fixed;inset:0;z-index:50;display:none;align-items:center;justify-content:center;background:rgba(7,6,15,.86);color:#e8e0ff;
   touch-action:manipulation;user-select:text;-webkit-user-select:text;padding:8px;overflow:auto}
@@ -1595,10 +1598,14 @@ if(Array.isArray(window.AEG_ICE)&&window.AEG_ICE.length)CFG.ice=window.AEG_ICE.c
 P.CFG=CFG;
 const $=id=>document.getElementById(id);
 const r1=v=>Math.round((+v||0)*10)/10, r2=v=>Math.round((+v||0)*100)/100;
+const nameHTML=(n,g)=>g?'<span class="gn-glow">'+esc(n)+'</span>':esc(n);
+function gtxt(t,x,y,sz,al){const c=ctx;c.save();c.font=sz+'px "Press Start 2P",monospace';c.textAlign=al||'left';const w=c.measureText(t).width,x0=al=='right'?x-w:al=='center'?x-w/2:x,tt=Date.now()/1000,hu=(tt*120)%360;
+  const g=c.createLinearGradient(x0,0,x0+w,0);for(let i=0;i<=4;i++)g.addColorStop(i/4,'hsl('+((hu+i*70)%360)+',100%,72%)');
+  c.fillStyle='#000';c.fillText(t,x+2,y+2);c.shadowColor='hsl('+hu+',100%,60%)';c.shadowBlur=10+6*Math.sin(tt*5);c.fillStyle=g;c.fillText(t,x,y);c.shadowBlur=18;c.globalAlpha=.55;c.fillText(t,x,y);c.restore()}
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const campName=c=>c=='a'?'AETHER':c=='k'?'ROYAUME':'---';
 
-Object.assign(P,{role:null,me:null,code:'',name:'',phase:'off',inLobby:false,cave:false,L:null,V:null,ping:0,oppName:'ADVERSAIRE',
+Object.assign(P,{role:null,me:null,code:'',name:'',phase:'off',inLobby:false,cave:false,L:null,V:null,ping:0,oppName:'ADVERSAIRE',oppGlow:false,glow:false,
   mana:{k:0,a:0},cd:{k:[],a:[]},ecd:{k:[0,0],a:[0,0]},nid:0,snapAcc:0,seq:0,lastSeq:0,gA:new Map(),gZ:new Map(),
   shMax:0,flMax:0,winner:null,endT:0,saved:null,gotSnap:false,uIdx:new Map(),ev:{ps:[],fx:[],th:[],spl:[],au:[]}});
 P.uIdx=new Map(U.map((u,i)=>[u,i]));
@@ -1731,13 +1738,13 @@ function joinRoom(code){
 }
 
 /* ---------------------------------------------------------------- SALON */
-function freshLobby(){return{hn:P.name,gn:'',gi:false,hc:null,gc:null,ht:null,gt:null,ph:'room',cd:0}}
-const pub=()=>{const L=P.L;return{hn:L.hn,gn:L.gn,gi:L.gi,hc:L.hc,gc:L.gc,hr:!!L.ht,gr:!!L.gt,ph:L.ph,cd:L.cd}};
+function freshLobby(){return{hn:P.name,hg:!!P.glow,gg:false,gn:'',gi:false,hc:null,gc:null,ht:null,gt:null,ph:'room',cd:0}}
+const pub=()=>{const L=P.L;return{hn:L.hn,hg:L.hg,gg:L.gg,gn:L.gn,gi:L.gi,hc:L.hc,gc:L.gc,hr:!!L.ht,gr:!!L.gt,ph:L.ph,cd:L.cd}};
 function lbPush(){if(P.role!='host')return;P.V=pub();NET.send({t:'lobby',L:P.V});renderRoom()}
 
 function enterRoom(role){
   P.role=role;P.phase='room';P.inLobby=true;P.winner=null;
-  if(role=='host'){P.L=freshLobby();P.V=pub()}else{P.V={hn:'…',gn:P.name,gi:true,hc:null,gc:null,hr:false,gr:false,ph:'room',cd:0}}
+  if(role=='host'){P.L=freshLobby();P.V=pub()}else{P.V={hn:'…',hg:false,gg:!!P.glow,gn:P.name,gi:true,hc:null,gc:null,hr:false,gr:false,ph:'room',cd:0}}
   setMsg('');history.replaceState(null,'',location.pathname+location.search);
   showPanel('room');renderRoom();
   NET.timers.push(setInterval(()=>{if(NET.open)NET.send({t:'ping',ts:performance.now()})},2000));
@@ -1746,12 +1753,12 @@ function renderRoom(){
   const V=P.V;if(!V||!$('pv-room'))return;
   $('pv-roomcode').textContent=P.code;
   const host=P.role=='host',mc=myCamp(),oc=oppCamp(),myReady=host?V.hr:V.gr,oppReady=host?V.gr:V.hr;
-  const card=(el,name,camp,ready,isMe,role,present)=>{
+  const card=(el,name,camp,ready,isMe,role,present,glow)=>{
     el.className='pv-pl'+(isMe?' me':'');
-    el.innerHTML=present?`<b>${esc(name||'?')}</b><span class="rl">${role}${isMe?' (TOI)':''}</span><br><span class="cp ${camp||''}">${camp?campName(camp):'camp : ?'}</span><br>${ready?'<span class="ok">ÉQUIPE PRÊTE ✓</span>':'<span class="rl">équipe : ...</span>'}`
+    el.innerHTML=present?`<b>${nameHTML(name||'?',glow)}</b><span class="rl">${role}${isMe?' (TOI)':''}</span><br><span class="cp ${camp||''}">${camp?campName(camp):'camp : ?'}</span><br>${ready?'<span class="ok">ÉQUIPE PRÊTE ✓</span>':'<span class="rl">équipe : ...</span>'}`
       :`<b>...</b><span class="rl">${role}</span><br><span class="rl">en attente</span>`};
-  card($('pv-p-host'),V.hn,V.hc,V.hr,host,'HÔTE',true);
-  card($('pv-p-guest'),V.gn,V.gc,V.gr,!host,'INVITÉ',V.gi);
+  card($('pv-p-host'),V.hn,V.hc,V.hr,host,'HÔTE',true,V.hg);
+  card($('pv-p-guest'),V.gn,V.gc,V.gr,!host,'INVITÉ',V.gi,V.gg);
   const open=V.ph=='room';
   for(const c of['k','a']){const b=$('pv-camp-'+c);b.classList.toggle('sel',mc==c);b.disabled=!open||oc==c||(myReady&&mc!=c&&false)}
   const tb=$('pv-team');
@@ -1793,7 +1800,7 @@ function lbCheckStart(){
 function startMatchHost(){
   const L=P.L,teams={};teams[L.hc]=L.ht;teams[L.gc]=L.gt;
   L.ph='play';L.cd=0;P.V=pub();
-  NET.send({t:'start',teams,hn:L.hn,gn:L.gn,hc:L.hc,gc:L.gc});
+  NET.send({t:'start',teams,hn:L.hn,gn:L.gn,hg:L.hg,gg:L.gg,hc:L.hc,gc:L.gc});
   begin(teams);
 }
 function pickTeam(){
@@ -1813,7 +1820,7 @@ function keep(){
 
 /* ---------------------------------------------------------------- MESSAGES */
 function onLinkOpen(){
-  if(P.role=='guest')NET.send({t:'hello',name:P.name});
+  if(P.role=='guest')NET.send({t:'hello',name:P.name,glow:!!P.glow});
   else{P.L.gi=true;lbPush();toast('Un adversaire a rejoint la room !')}
 }
 function onLinkClose(bye){
@@ -1836,14 +1843,14 @@ function onData(m){
     case 'bye':onLinkClose(true);break;
     case 'full':setMsg('Room pleine.');toast('Room pleine.');NET.close();showPanel('home');P.role=null;P.phase='off';break;
     /* --- hôte reçoit --- */
-    case 'hello':if(P.role=='host'){P.L.gn=String(m.name||'Invité').slice(0,12);P.oppName=P.L.gn;lbPush()}break;
+    case 'hello':if(P.role=='host'){P.L.gn=String(m.name||'Invité').slice(0,12);P.L.gg=!!m.glow;P.oppName=P.L.gn;P.oppGlow=P.L.gg;lbPush()}break;
     case 'claim':if(P.role=='host')lbClaim('guest',m.c);break;
     case 'team':if(P.role=='host')lbTeam('guest',m.team);break;
     case 'unready':if(P.role=='host')lbUnready('guest');break;
     case 'cmd':if(P.role=='host'&&P.phase=='play')execCmd(P.L.gc,m.c);break;
     /* --- invité reçoit --- */
-    case 'lobby':if(P.role=='guest'){P.V=m.L;P.oppName=P.V.hn||'HÔTE';if(P.phase=='end'&&P.V.ph=='room'){}renderRoom()}break;
-    case 'start':if(P.role=='guest'){P.V=Object.assign({},P.V,{hn:m.hn,gn:m.gn,hc:m.hc,gc:m.gc,ph:'play'});P.oppName=m.hn;begin(m.teams)}break;
+    case 'lobby':if(P.role=='guest'){P.V=m.L;P.oppName=P.V.hn||'HÔTE';P.oppGlow=!!P.V.hg;if(P.phase=='end'&&P.V.ph=='room'){}renderRoom()}break;
+    case 'start':if(P.role=='guest'){P.V=Object.assign({},P.V,{hn:m.hn,gn:m.gn,hg:m.hg,gg:m.gg,hc:m.hc,gc:m.gc,ph:'play'});P.oppName=m.hn;P.oppGlow=!!m.hg;begin(m.teams)}break;
     case 'snap':if(P.role=='guest'&&P.phase=='play')applySnap(m);break;
     case 'end':if(P.role=='guest'&&P.phase=='play')finish(m.w,m.msg,true);break;
   }
@@ -1853,7 +1860,7 @@ function onData(m){
 function begin(teams){
   const host=P.role=='host';
   P.me=host?P.V.hc:P.V.gc;
-  if(!host)P.oppName=P.V.hn;else P.oppName=P.L.gn||'ADVERSAIRE';
+  if(!host){P.oppName=P.V.hn;P.oppGlow=!!P.V.hg}else{P.oppName=P.L.gn||'ADVERSAIRE';P.oppGlow=!!P.L.gg}
   P.phase='play';P.on=PVP.on=true;P.inLobby=false;P.winner=null;P.endT=0;P.gotSnap=host;P.lastSeq=0;P.seq=0;P.snapAcc=0;P.shMax=P.flMax=0;
   P.gA.clear();P.gZ.clear();P.nid=0;P.ev={ps:[],fx:[],th:[],spl:[],au:[]};
   keep();P.t0=performance.now();P.reward=null;teamK=teams.k.slice();teamA=teams.a.slice();
@@ -2025,9 +2032,9 @@ P.hud=function(){
   bar2(24,18,268,22,a1,a1>.33?'#5ac8fa':'#ff6a3a','#0d1a2a',(me=='k'?'TA CHARRETTE ':'TON OBÉLISQUE ')+Math.max(0,Math.ceil(mine.hp)));
   bar2(24,42,268,22,mana/CFG.manaMax,'#4aa8ff','#10304a',(me=='a'?'AETHER ':'MANA ')+(mana|0));
   bar2(24,66,268,22,a2,'#ff6a3a','#3a0d16',(me=='k'?'OBÉLISQUE ENNEMI ':'CHARRETTE ENNEMIE ')+Math.max(0,Math.ceil(en.hp)));
-  txt('VS '+String(P.oppName).toUpperCase(),26,108,8,'#b9a9d9');
+  if(P.oppGlow)gtxt('VS '+String(P.oppName).toUpperCase(),26,108,8);else txt('VS '+String(P.oppName).toUpperCase(),26,108,8,'#b9a9d9');
   ninep('L',PAL.navy,0,W-236,10,224,70,3);
-  txt(String(P.oppName).toUpperCase().slice(0,14),W-28,36,10,'#fff','right');
+  if(P.oppGlow)gtxt(String(P.oppName).toUpperCase().slice(0,14),W-28,36,10,'right');else txt(String(P.oppName).toUpperCase().slice(0,14),W-28,36,10,'#fff','right');
   txt(campName(me=='k'?'a':'k'),W-28,54,8,me=='k'?'#e2b8ff':'#8fc4ff','right');
   txt('PING '+P.ping+' MS',W-28,70,8,P.ping>200?'#ff8a8a':'#7dff9a','right');
   {const mm=UIB.mut,o3=uiBtn('mut','R',mm[0],mm[1],mm[2],mm[3],3,muted);spkIcon(mm[0]+15,mm[1]+15+o3,muted)}
@@ -2078,7 +2085,7 @@ function applyGifts(list){if(!Array.isArray(list))return 0;let n=0;
     GF.push(g.id);n++}
   if(GF.length>80)GF=GF.slice(-80);return n}
 async function pollGifts(){if(!P.acc||ACC.busy||ACC.gp)return;ACC.gp=1;
-  try{const j=await api('/api/gifts',{token:P.acc.token});if(applyGifts(j.gifts)){toast('CADEAU RE\u00c7U !');autosave(true)}}
+  try{const j=await api('/api/gifts',{token:P.acc.token});if(applyGifts(j.gifts)){toast('CADEAU RE\u00c7U !');autosave(true)}if(!!j.glow!==!!P.glow){P.glow=!!j.glow;accUI();toast(P.glow?'GLOW MODE ACTIV\u00c9 !':'Glow Mode d\u00e9sactiv\u00e9')}}
   catch(e){if(e.status==401){try{const j=await api('/api/login',{name:P.acc.name,pass:P.acc.pass});P.acc.token=j.token}catch(_){}}}
   ACC.gp=0}
 const lkey=()=>'aeg_local_'+P.acc.name.toLowerCase();
@@ -2095,7 +2102,7 @@ async function authenticate(kind){
   lmsg('Connexion…');
   try{
     const j=await api(kind=='up'?'/api/register':'/api/login',{name,pass});
-    P.acc={name:j.name,token:j.token,pass};
+    P.acc={name:j.name,token:j.token,pass};P.glow=!!j.glow;
     /* le plus récent gagne : copie locale (appareil) ou copie du serveur */
     let local=null;try{local=JSON.parse(LS(lkey())||'null')}catch(e){}
     const srv=j.save&&j.save.s?j.save:null;
@@ -2131,12 +2138,12 @@ async function autosave(force){
 function accUI(){
   const on=!!P.acc;
   $('pv-namerow').style.display=on?'none':'';
-  const w=$('pv-whoami');w.style.display=on?'':'none';w.textContent=on?'Joueur : '+P.acc.name:'';
+  const w=$('pv-whoami');w.style.display=on?'':'none';w.innerHTML=on?'Joueur : '+nameHTML(P.acc.name,P.glow):'';ACC.nk=null;
 }
 function logout(){LSset('aeg_login','');location.reload()}
 setInterval(()=>{autosave(false);if(++ACC.pt%8==0)pollGifts();
   $('pv-acc').classList.toggle('on',!!P.acc&&state=='menu'&&!P.overlayOpen&&!teamOpen&&!shopOpen&&!chestOpen);
-  if($('pv-acc').classList.contains('on'))$('pv-accname').textContent='COMPTE : '+P.acc.name;
+  if($('pv-acc').classList.contains('on')){const k=P.acc.name+'|'+P.glow;if(ACC.nk!==k){ACC.nk=k;$('pv-accname').innerHTML='COMPTE : '+nameHTML(P.acc.name,P.glow)}}
   if(P.waitChest&&!chestOpen){P.waitChest=false;showPanel('room')}
 },2500);
 window.addEventListener('pagehide',()=>{if(P.acc){const cur=JSON.stringify(snapshot());if(cur!=ACC.last){ACC.ts=Date.now();const rec={s:JSON.parse(cur),ts:ACC.ts};LSset(lkey(),JSON.stringify(rec));try{fetch('/api/save',{method:'POST',keepalive:true,headers:{'Content-Type':'application/json'},body:JSON.stringify({token:P.acc.token,save:rec,ack:GF})})}catch(e){}}}});
