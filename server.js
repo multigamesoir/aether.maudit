@@ -42,19 +42,19 @@ async function api(req,res,u){
       const name=String(b.name||'').trim(),pw=String(b.pass||'');
       if(!okName(name))return json(res,400,{err:'Pseudo : 3 à 12 caractères (lettres, chiffres, _ ou -).'});
       if(pw.length<4||pw.length>64)return json(res,400,{err:'Mot de passe : 4 caractères minimum.'});
-      if(blocked(ip))return json(res,429,{err:'Trop d\'essais. Réessaie dans 10 minutes.'});
+      if(u=='/api/login'&&blocked(ip))return json(res,429,{err:'Trop d\'essais. Réessaie dans 10 minutes.'}); // plus aucune limite à la création de compte
       const key=name.toLowerCase();let acc=await store.get(key);
       if(u=='/api/register'){
         if(acc)return json(res,409,{err:'Ce pseudo existe déjà. Utilise SE CONNECTER.'});
         const salt=crypto.randomBytes(16).toString('hex');
-        acc={name,salt,hash:hashPw(pw,salt),save:null,pend:[],created:Date.now()};await store.set(key,acc);
+        acc={name,salt,hash:hashPw(pw,salt),save:null,pend:[],created:Date.now(),glow:false};await store.set(key,acc);
       }else{
         if(!acc){fail(ip);return json(res,404,{err:'Compte introuvable. Clique sur CRÉER LE COMPTE.'})}
         const a=Buffer.from(hashPw(pw,acc.salt),'hex'),h=Buffer.from(acc.hash,'hex');
         if(a.length!=h.length||!crypto.timingSafeEqual(a,h)){fail(ip);return json(res,401,{err:'Mot de passe incorrect.'})}
       }
       const token=crypto.randomBytes(18).toString('hex');sessions.set(token,key);
-      return json(res,200,{ok:1,name:acc.name,token,save:acc.save,gifts:acc.pend||[],created:u=='/api/register'});
+      return json(res,200,{ok:1,name:acc.name,token,save:acc.save,gifts:acc.pend||[],created:u=='/api/register',glow:!!acc.glow});
     }
     if(u=='/api/save'){
       const key=sessions.get(String(b.token||''));if(!key)return json(res,401,{err:'Session expirée'});
@@ -63,12 +63,12 @@ async function api(req,res,u){
         const acc=await store.get(key);if(!acc)return json(res,404,{err:'Compte introuvable'});
         acc.save=b.save;
         if(Array.isArray(b.ack)&&acc.pend&&acc.pend.length){const ak=new Set(b.ack.filter(x=>typeof x=='string'));acc.pend=acc.pend.filter(g=>!ak.has(g.id))}
-        await store.set(key,acc);return json(res,200,{ok:1,gifts:acc.pend||[]})});
+        await store.set(key,acc);return json(res,200,{ok:1,gifts:acc.pend||[],glow:!!acc.glow})});
     }
     if(u=='/api/gifts'){
       const key=sessions.get(String(b.token||''));if(!key)return json(res,401,{err:'Session expirée'});
       const acc=await store.get(key);if(!acc)return json(res,404,{err:'Compte introuvable'});
-      return json(res,200,{ok:1,gifts:acc.pend||[]});
+      return json(res,200,{ok:1,gifts:acc.pend||[],glow:!!acc.glow});
     }
     return json(res,404,{err:'Inconnu'});
   }catch(e){console.error('api',e.message);return json(res,500,{err:'Erreur serveur'})}
@@ -127,7 +127,7 @@ async function adminApi(req,res,u){
     if(u=='/api/admin/list'){
       const ks=await store.keys(),all=await store.getMany(ks),rows=[];
       for(const k of ks){const a=all[k];if(!a)continue;const s=(a.save&&a.save.s)||{};
-        rows.push({name:a.name||k,created:a.created||0,ts:(a.save&&a.save.ts)||0,coins:Math.round(+s.coins||0),heroes:Object.keys(s.heroOwned||{}).length,pend:(a.pend||[]).length})}
+        rows.push({name:a.name||k,created:a.created||0,ts:(a.save&&a.save.ts)||0,coins:Math.round(+s.coins||0),heroes:Object.keys(s.heroOwned||{}).length,pend:(a.pend||[]).length,glow:!!a.glow})}
       rows.sort((x,y)=>y.ts-x.ts||x.name.localeCompare(y.name));
       return json(res,200,{ok:1,accounts:rows});
     }
@@ -135,7 +135,18 @@ async function adminApi(req,res,u){
     if(!okName(name))return json(res,400,{err:'Pseudo invalide'});
     if(u=='/api/admin/get'){
       const a=await store.get(key);if(!a)return json(res,404,{err:'Compte introuvable'});
-      return json(res,200,{ok:1,name:a.name,created:a.created||0,save:a.save||null,pend:a.pend||[]});
+      return json(res,200,{ok:1,name:a.name,created:a.created||0,save:a.save||null,pend:a.pend||[],glow:!!a.glow});
+    }
+    if(u=='/api/admin/create'){ // création de compte forcée (aucune limite)
+      const pw=String(b.pass||'');if(pw.length<4||pw.length>64)return json(res,400,{err:'Mot de passe : 4 à 64 caractères.'});
+      return await withLock(key,async()=>{if(await store.get(key))return json(res,409,{err:'Ce pseudo existe déjà.'});
+        const salt=crypto.randomBytes(16).toString('hex');
+        await store.set(key,{name,salt,hash:hashPw(pw,salt),save:null,pend:[],created:Date.now(),glow:!!b.glow});
+        return json(res,200,{ok:1,name})});
+    }
+    if(u=='/api/admin/setglow'){ // Glow Mode du pseudo
+      return await withLock(key,async()=>{const a=await store.get(key);if(!a)return json(res,404,{err:'Compte introuvable'});
+        a.glow=!!b.glow;await store.set(key,a);return json(res,200,{ok:1,glow:a.glow})});
     }
     if(u=='/api/admin/give'){
       const ops=cleanOps(b.ops);if(!ops)return json(res,400,{err:'Modifications invalides'});
@@ -185,6 +196,12 @@ h2{font-size:16px;margin:0 0 6px}h3{font-size:14px;margin:16px 0 6px;color:var(-
 .login{max-width:360px;margin:12vh auto;padding:20px}.err{color:var(--bad);min-height:20px;margin-top:8px}
 .bar{display:flex;gap:6px;margin:4px 0 6px}.sticky{position:sticky;bottom:0;background:var(--card);padding:10px 0;border-top:1px solid var(--line);margin-top:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 #msg{color:var(--ok);font-size:13px}
+.gn-glow{font-weight:800;background:linear-gradient(90deg,#ffe27a,#ff7ad9,#7fa8ff,#7dffd0,#ffe27a);background-size:300% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;-webkit-text-fill-color:transparent;animation:gnSlide 3s linear infinite,gnPulse 1.6s ease-in-out infinite alternate}
+@keyframes gnSlide{to{background-position:300% 0}}
+@keyframes gnPulse{from{filter:drop-shadow(0 0 2px #ffe27a) drop-shadow(0 0 5px #7fa8ff)}to{filter:drop-shadow(0 0 5px #ff7ad9) drop-shadow(0 0 12px #7dffd0)}}
+.glowbox{display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:10px 12px;background:#0e0c20;border:1px solid var(--line);border-radius:8px}
+.glowbox .chk{border:0;padding:0;background:none}
+.create{margin-top:10px;display:grid;gap:6px}
 </style></head><body><div id="app"></div>
 <script>
 var TOKEN='',CAT=null,STORE='',ACCS=[],CUR=null,DATA=null,INIT={};
@@ -218,13 +235,23 @@ function main(){var a=$('app');a.innerHTML='';
  var top=h('div',{class:'top'},[h('h1',{text:'Aethergard - Admin'}),h('span',{class:'badge '+(STORE=='upstash'?'ok':'bad'),text:'Stockage : '+STORE}),h('button',{class:'s',text:'Actualiser',onclick:function(){loadList(true)}}),h('button',{class:'s',text:'D\u00e9connexion',onclick:logout})]);a.appendChild(top);
  if(STORE!='upstash')a.appendChild(h('div',{class:'warn',text:'Attention : le stockage est en mode fichier. Les comptes (et tes modifications) disparaissent \u00e0 chaque red\u00e9ploiement de Render. Configure Upstash (voir LIRE-MOI.md).'}));
  var search=h('input',{type:'text',placeholder:'Rechercher un pseudo...'});search.oninput=function(){renderList(search.value)};
- var left=h('div',{class:'box'},[h('h2',{text:'Comptes'}),search,h('div',{class:'list',id:'list'})]);
+ var left=h('div',{class:'box'},[h('h2',{text:'Comptes'}),createBox(),search,h('div',{class:'list',id:'list'})]);
  var right=h('div',{class:'box',id:'detail'},[h('p',{class:'mut',text:'Choisis un compte \u00e0 gauche.'})]);
  a.appendChild(h('div',{class:'wrap'},[left,right]));loadList(false)}
+function createBox(){
+ var nameI=h('input',{type:'text',placeholder:'Pseudo (3-12 caract\u00e8res)',maxlength:'12',autocomplete:'off'}),passI=h('input',{type:'text',placeholder:'Mot de passe (4 minimum)',autocomplete:'off'}),
+  gcb=h('input',{type:'checkbox'}),er=h('div',{class:'err',style:'min-height:0;font-size:13px'}),form=h('div',{class:'create',style:'display:none'});
+ var glab=h('label',{class:'chk'},[gcb,document.createTextNode('Glow Mode d\u00e8s la cr\u00e9ation')]);
+ var go=h('button',{class:'p',text:'Cr\u00e9er le compte',onclick:function(){var nm0=nameI.value.trim();er.style.color='#ffd45a';er.textContent='Cr\u00e9ation...';
+  call('/api/admin/create',{name:nm0,pass:passI.value,glow:gcb.checked}).then(function(j){er.style.color='#3ecf6e';er.textContent='Compte "'+j.name+'" cr\u00e9\u00e9 !';nameI.value='';passI.value='';gcb.checked=false;
+   return call('/api/admin/list').then(function(l){ACCS=l.accounts;renderList('');openAcc(j.name)})}).catch(function(e){er.style.color='#ff5a6a';er.textContent=e.message})}});
+ form.appendChild(nameI);form.appendChild(passI);form.appendChild(glab);form.appendChild(go);form.appendChild(er);
+ var tg=h('button',{class:'s p',text:'+ Cr\u00e9er un compte (forc\u00e9)',onclick:function(){form.style.display=form.style.display=='none'?'grid':'none'}});
+ return h('div',{},[tg,form])}
 function loadList(keep){call('/api/admin/list').then(function(j){ACCS=j.accounts;renderList('');if(keep&&CUR)openAcc(CUR)}).catch(function(e){$('list').textContent=e.message})}
 function renderList(q){var L=$('list');L.innerHTML='';q=(q||'').toLowerCase();var n=0;
  ACCS.forEach(function(c){if(q&&c.name.toLowerCase().indexOf(q)<0)return;n++;
-  var r=h('div',{class:'row'+(CUR==c.name.toLowerCase()?' sel':'')},[h('b',{text:c.name}),h('span',{text:c.coins+' pi\u00e8ces - '+c.heroes+' h\u00e9ros - '+fmt(c.ts)+(c.pend?' - '+c.pend+' en attente':'')})]);
+  var r=h('div',{class:'row'+(CUR==c.name.toLowerCase()?' sel':'')},[h('b',{class:c.glow?'gn-glow':'',text:c.name}),h('span',{text:c.coins+' pi\u00e8ces - '+c.heroes+' h\u00e9ros - '+fmt(c.ts)+(c.pend?' - '+c.pend+' en attente':'')})]);
   r.onclick=function(){openAcc(c.name)};L.appendChild(r)});
  if(!n)L.appendChild(h('p',{class:'mut',text:ACCS.length?'Aucun r\u00e9sultat.':'Aucun compte pour le moment.'}))}
 function openAcc(name){CUR=name.toLowerCase();renderList('');$('detail').innerHTML='Chargement...';
@@ -239,10 +266,15 @@ function chkBlock(title,items,owned,key){
  bar.appendChild(h('button',{class:'s',text:'Tout d\u00e9cocher',onclick:function(){boxes.forEach(function(b){b.cb.checked=false;b.cb.onchange()})}}));
  box.appendChild(bar);box.appendChild(grid);INIT[key]=boxes;return box}
 function detail(){var d=$('detail');d.innerHTML='';INIT={};var s=effective(),pend=DATA.pend||[];
- d.appendChild(h('h2',{text:DATA.name}));
+ d.appendChild(h('h2',{class:DATA.glow?'gn-glow':'',text:DATA.name}));
  d.appendChild(h('p',{class:'mut',text:'Cr\u00e9\u00e9 : '+fmt(DATA.created)+' - Derni\u00e8re sauvegarde : '+(DATA.save?fmt(DATA.save.ts):'aucune')}));
  d.appendChild(h('div',{class:'info',text:'Les modifications sont appliqu\u00e9es au prochain lancement du jeu du joueur, ou dans environ 20 secondes s\u2019il est d\u00e9j\u00e0 connect\u00e9. Les valeurs ci-dessous incluent les cadeaux d\u00e9j\u00e0 en attente.'}));
  if(!DATA.save)d.appendChild(h('div',{class:'warn',text:'Ce compte n\u2019a pas encore de sauvegarde en ligne (le joueur ne s\u2019est pas encore connect\u00e9 avec une partie).'}));
+ d.appendChild(h('h3',{text:'Pseudo'}));
+ var gcb=h('input',{type:'checkbox'}),gprev=h('span',{class:DATA.glow?'gn-glow':'',text:DATA.name,style:'font-size:18px'}),gmsg=h('span',{class:'mut',style:'font-size:13px'});gcb.checked=!!DATA.glow;
+ gcb.onchange=function(){gcb.disabled=true;gmsg.textContent='Enregistrement...';call('/api/admin/setglow',{name:DATA.name,glow:gcb.checked}).then(function(j){DATA.glow=j.glow;gprev.className=j.glow?'gn-glow':'';gmsg.style.color='#3ecf6e';gmsg.textContent=j.glow?'Glow Mode activ\u00e9 (visible en jeu d\u2019ici ~20 s)':'Glow Mode d\u00e9sactiv\u00e9';gcb.disabled=false;
+   for(var i=0;i<ACCS.length;i++)if(ACCS[i].name.toLowerCase()==CUR)ACCS[i].glow=j.glow;renderList('')}).catch(function(e){gcb.checked=!gcb.checked;gcb.disabled=false;alert(e.message)})};
+ d.appendChild(h('div',{class:'glowbox'},[h('label',{class:'chk'},[gcb,document.createTextNode('Glow Mode (pseudo en surbrillance)')]),gprev,gmsg]));
  d.appendChild(h('h3',{text:'Valeurs (n\u00e9gatif = retirer)'}));var ng=h('div',{class:'grid'});INIT.num={};
  NUM.forEach(function(n){var inp=h('input',{type:'number',step:'1',placeholder:'0'});INIT.num[n[0]]=inp;
   var lab=h('label',{},[n[1],h('small',{text:'actuel : '+s[n[0]]+(n[0]=='ARL'?' / '+CAT.arMax:'')})]);ng.appendChild(h('div',{class:'num'},[lab,inp]))});d.appendChild(ng);
