@@ -1,4 +1,4 @@
-// Serveur Aethergard : sert le jeu + relaie les messages entre les 2 joueurs (WebSocket).
+// Serveur Aethergard : sert le jeu + relaie les messages entre les joueurs d'une room (WebSocket) : 1v1 ou 2v2.
 const http=require('http'),fs=require('fs'),path=require('path'),crypto=require('crypto');
 const {WebSocketServer}=require('ws');
 const PORT=process.env.PORT||3000, ROOT=__dirname;
@@ -371,31 +371,43 @@ const server=http.createServer((req,res)=>{
     res.writeHead(200,{'Content-Type':MIME[path.extname(f)]||'application/octet-stream'});res.end(d)});
 });
 const wss=new WebSocketServer({server,path:'/ws',maxPayload:1<<20});
-const rooms=new Map(); // code -> {host,guest}
+/* Rooms : 1v1 (max=2 : 1 hôte + 1 invité) ou 2v2 (max=4 : 1 hôte + 3 invités).
+   Slot 0 = hôte, slots 1..3 = invités. L'hôte est autoritaire : il envoie à tous les invités (ou à un seul avec "to"),
+   et chaque message d'un invité est transmis à l'hôte avec son numéro de slot ("from"). */
+const rooms=new Map(); // code -> {host,guests:[ws|null,...],max}
 function send(ws,o){if(ws&&ws.readyState==1)ws.send(JSON.stringify(o))}
 wss.on('connection',ws=>{
   ws.alive=true;
   ws.on('message',raw=>{
     let m;try{m=JSON.parse(raw)}catch(e){return}
-    if(m.k=='ka')return;
+    if(!m||m.k=='ka')return;
     if(m.k=='host'){
-      const c=String(m.code||'').toUpperCase().slice(0,8);
+      const c=String(m.code||'').toUpperCase().slice(0,8),max=m.max==4?4:2;
       if(!c||rooms.has(c))return send(ws,{k:'err',m:'Code déjà utilisé, réessaie.'});
-      rooms.set(c,{host:ws,guest:null});ws.room=c;ws.role='host';send(ws,{k:'ok'});
+      rooms.set(c,{host:ws,guests:new Array(max-1).fill(null),max});ws.room=c;ws.role='host';ws.slot=0;send(ws,{k:'ok',slot:0,max});
     }else if(m.k=='join'){
       const c=String(m.code||'').toUpperCase().slice(0,8),r=rooms.get(c);
       if(!r)return send(ws,{k:'err',m:'Room introuvable. Vérifie le code.'});
-      if(r.guest)return send(ws,{k:'err',m:'Room pleine.'});
-      r.guest=ws;ws.room=c;ws.role='guest';send(ws,{k:'ok'});send(r.host,{k:'peer'});
+      const i=r.guests.indexOf(null);
+      if(i<0)return send(ws,{k:'err',m:'Room pleine.'});
+      r.guests[i]=ws;ws.room=c;ws.role='guest';ws.slot=i+1;send(ws,{k:'ok',slot:i+1,max:r.max});send(r.host,{k:'peer',slot:i+1});
     }else if(m.k=='d'){
       const r=rooms.get(ws.room);if(!r)return;
-      send(ws.role=='host'?r.guest:r.host,{k:'d',d:m.d});
+      if(ws.role=='host'){
+        if(Number.isInteger(m.to))send(r.guests[m.to-1],{k:'d',d:m.d});
+        else for(const g of r.guests)send(g,{k:'d',d:m.d});
+      }else send(r.host,{k:'d',d:m.d,from:ws.slot});
     }
   });
   ws.on('close',()=>{
     const r=rooms.get(ws.room);if(!r)return;
-    if(ws.role=='host'){send(r.guest,{k:'bye'});rooms.delete(ws.room);try{r.guest&&r.guest.close()}catch(e){}}
-    else{r.guest=null;send(r.host,{k:'bye'})}
+    if(ws.role=='host'){
+      for(const g of r.guests){if(!g)continue;send(g,{k:'bye'});try{g.close()}catch(e){}}
+      rooms.delete(ws.room);
+    }else{
+      if(r.guests[ws.slot-1]===ws)r.guests[ws.slot-1]=null;
+      send(r.host,{k:'bye',slot:ws.slot});
+    }
   });
 });
 server.listen(PORT,()=>console.log('Aethergard relay on',PORT));
