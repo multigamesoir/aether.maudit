@@ -164,6 +164,11 @@ function cleanAcc(a){
   return {name,salt:a.salt,hash:a.hash,save:a.save||null,pend,created:+a.created||Date.now(),glow:nsIn(a.glow),tskin:sk.tskin,askin:sk.askin};
 }
 async function adminBackupRestore(res,u,b){
+  if(u=='/api/admin/download'){
+    const {buf,count}=await makeBackup();
+    const stamp=new Date().toISOString().replace(/[:T]/g,'-').slice(0,19);
+    return json(res,200,{ok:1,count,name:'aethergard-backup-'+stamp+'.json.gz',data:buf.toString('base64')});
+  }
   if(u=='/api/admin/backup'){
     try{const {buf,count}=await makeBackup();
       await sendBackup(buf,count);
@@ -208,7 +213,7 @@ async function adminApi(req,res,u){
       rows.sort((x,y)=>y.ts-x.ts||x.name.localeCompare(y.name));
       return json(res,200,{ok:1,accounts:rows});
     }
-    if(u=='/api/admin/backup'||u=='/api/admin/restore')return await adminBackupRestore(res,u,b);
+    if(u=='/api/admin/backup'||u=='/api/admin/download'||u=='/api/admin/restore')return await adminBackupRestore(res,u,b);
     const name=String(b.name||'').trim(),key=name.toLowerCase();
     if(!okName(name))return json(res,400,{err:'Pseudo invalide'});
     if(u=='/api/admin/get'){
@@ -353,13 +358,17 @@ function backupUI(){
   file=h('input',{type:'file',accept:'.gz,.json',style:'display:none'}),
   bb=h('button',{class:'s p',text:'Save All Backup',onclick:function(){var o=bb.textContent;bb.disabled=true;bb.textContent='Envoi...';
    call('/api/admin/backup').then(function(j){alert('Backup envoy\u00e9e sur Discord : '+j.count+' comptes ('+Math.max(1,Math.round(j.size/1024))+' Ko).')}).catch(function(e){alert(e.message)}).then(function(){bb.disabled=false;bb.textContent=o})}}),
+  db=h('button',{class:'s',text:'T\u00e9l\u00e9charger la backup',onclick:function(){var o=db.textContent;db.disabled=true;db.textContent='Pr\u00e9paration...';
+   call('/api/admin/download').then(function(j){var bin=atob(j.data),u=new Uint8Array(bin.length);for(var i=0;i<bin.length;i++)u[i]=bin.charCodeAt(i);
+    var a=document.createElement('a');a.href=URL.createObjectURL(new Blob([u],{type:'application/gzip'}));a.download=j.name;document.body.appendChild(a);a.click();
+    setTimeout(function(){URL.revokeObjectURL(a.href);a.remove()},2000)}).catch(function(e){alert(e.message)}).then(function(){db.disabled=false;db.textContent=o})}}),
   rb=h('button',{class:'s',text:'Restaurer une backup',onclick:function(){file.click()}});
  file.onchange=function(){var f=file.files[0];file.value='';if(!f)return;if(f.size>25e6){alert('Fichier trop gros.');return}
   var fr=new FileReader();fr.onload=function(){var u=new Uint8Array(fr.result),s='';for(var i=0;i<u.length;i+=32768)s+=String.fromCharCode.apply(null,u.subarray(i,i+32768));
    if(!confirm('Restaurer la backup "'+f.name+'" ?\n\n'+(mode.value=='all'?'ATTENTION : les comptes existants seront \u00e9cras\u00e9s par ceux de la backup.':'Seuls les comptes manquants seront recr\u00e9\u00e9s (les existants ne sont pas touch\u00e9s).')))return;
    rb.disabled=true;call('/api/admin/restore',{data:btoa(s),mode:mode.value}).then(function(j){alert('Restauration termin\u00e9e : '+j.restored+' compte(s) restaur\u00e9(s), '+j.kept+' d\u00e9j\u00e0 pr\u00e9sent(s) ignor\u00e9(s)'+(j.bad?', '+j.bad+' invalide(s)':'')+'.');loadList(true)}).catch(function(e){alert(e.message)}).then(function(){rb.disabled=false})};
   fr.readAsArrayBuffer(f)};
- return h('span',{style:'display:flex;gap:6px;align-items:center;flex-wrap:wrap'},[bb,rb,mode,file])}
+ return h('span',{style:'display:flex;gap:6px;align-items:center;flex-wrap:wrap'},[bb,db,rb,mode,file])}
 function createBox(){
  var nameI=h('input',{type:'text',placeholder:'Pseudo (3-12 caract\u00e8res)',maxlength:'12',autocomplete:'off'}),passI=h('input',{type:'text',placeholder:'Mot de passe (4 minimum)',autocomplete:'off'}),
   gcb=h('select',{}),er=h('div',{class:'err',style:'min-height:0;font-size:13px'}),form=h('div',{class:'create',style:'display:none'});NS.forEach(function(o){gcb.appendChild(h('option',{value:o[0],text:o[1]}))});
