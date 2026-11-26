@@ -127,12 +127,26 @@ async function makeBackup(){
 async function sendBackup(buf,count){
   if(!/^https:\/\/(ptb\.|canary\.)?discord(app)?\.com\/api\/webhooks\//.test(BACKUP_HOOK))throw new Error('Webhook non configuré : ajoute la variable BACKUP_WEBHOOK dans Render > Environment.');
   if(buf.length>9.5*1024*1024)throw new Error('Backup trop gros pour Discord (limite ~10 Mo).');
-  const stamp=new Date().toISOString().replace(/[:T]/g,'-').slice(0,19);
-  const fd=new FormData();
-  fd.append('content','Backup Aethergard : '+count+' comptes');
-  fd.append('files[0]',new Blob([buf],{type:'application/gzip'}),'aethergard-backup-'+stamp+'.json.gz');
-  const r=await fetch(BACKUP_HOOK,{method:'POST',body:fd});
-  if(!r.ok)throw new Error('Discord a refusé le fichier (code '+r.status+').');
+  const stamp=new Date().toISOString().replace(/[:T]/g,'-').slice(0,19),fname='aethergard-backup-'+stamp+'.json.gz';
+  for(let essai=1;essai<=3;essai++){
+    const fd=new FormData();
+    fd.append('content','Backup Aethergard : '+count+' comptes');
+    fd.append('files[0]',new Blob([buf],{type:'application/gzip'}),fname);
+    const r=await fetch(BACKUP_HOOK,{method:'POST',body:fd});
+    if(r.ok)return;
+    const txt=await r.text().catch(()=>'');
+    console.error('backup discord',r.status,txt.slice(0,200));
+    if(r.status==429){
+      let wait=+r.headers.get('retry-after')||0;
+      try{const j=JSON.parse(txt);if(j.retry_after)wait=+j.retry_after}catch(e){}
+      const html=/^\s*</.test(txt); // page HTML (Cloudflare) = IP de l'hébergeur bloquée, pas une simple limite du webhook
+      if(!html&&wait>0&&wait<=15&&essai<3){await new Promise(res=>setTimeout(res,Math.ceil(wait*1000)+300));continue}
+      throw new Error(html?'Discord bloque temporairement les envois depuis ce serveur (limite sur l\u2019IP de l\u2019hébergeur). Réessaie dans quelques minutes.':'Discord limite les envois : réessaie dans '+Math.max(1,Math.ceil(wait||60))+' secondes.');
+    }
+    if(r.status==404||r.status==401)throw new Error('Webhook invalide ou supprimé (code '+r.status+') : vérifie la variable BACKUP_WEBHOOK.');
+    if(r.status==413)throw new Error('Fichier trop gros pour Discord.');
+    throw new Error('Discord a refusé le fichier (code '+r.status+').');
+  }
 }
 function parseBackup(buf){
   if(buf.length>1&&buf[0]==0x1f&&buf[1]==0x8b)buf=zlib.gunzipSync(buf,{maxOutputLength:150e6});
