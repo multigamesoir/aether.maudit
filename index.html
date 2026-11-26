@@ -1276,7 +1276,7 @@ function drawZ(z){const D=z.d,sx=z.x-cam.x,Z=ZS[z.ty],sh=z.rage?rgSh(z.ty):Z.sh,
  else if(z.st=='wind'){k='idle';f=0}
  else if(z.gd&&sh.shield){k='shield';f=(z.t*6|0)%n[k]}
  else if(z.mv){k='move';f=(z.t*(D.wfps||clamp(z.sp/7,6,14))|0)%n[k]}else{k='idle';f=(z.t*6|0)%n[k]}
- if(z.st!='dead')shadow(sx,z.y,12*D.sc);if(z.rage&&z.st!='dead'){ctx.fillStyle='rgba(255,25,45,'+(.22+.1*Math.sin(T*9+z.sd))+')';ctx.beginPath();ctx.ellipse(sx,z.y,20*D.sc,11,0,0,7);ctx.fill()}if(z.haste>0&&z.st!='dead')hasteFx(sx,z.y,z.haste);if(z.st!='dead'&&z.slow>0)slowFx(sx,z.y,D.sc,z.sd)spr(sh[k],D.fw,f,sx,z.y-z.h+(FO[D.m]||0)*D.sc,D.fw/2,D.sc,(z.dir<0)!=!!FL[D.m],z.fade*(z.mat>0?1-z.mat/.55:1),z.fl+(z.slow>0?.12:0)+(z.haste>0?.1:0)+(z.mat>0?.4:0));
+ if(z.st!='dead')shadow(sx,z.y,12*D.sc);if(z.rage&&z.st!='dead'){ctx.fillStyle='rgba(255,25,45,'+(.22+.1*Math.sin(T*9+z.sd))+')';ctx.beginPath();ctx.ellipse(sx,z.y,20*D.sc,11,0,0,7);ctx.fill()}if(z.haste>0&&z.st!='dead')hasteFx(sx,z.y,z.haste);if(z.st!='dead'&&z.slow>0)slowFx(sx,z.y,D.sc,z.sd);spr(sh[k],D.fw,f,sx,z.y-z.h+(FO[D.m]||0)*D.sc,D.fw/2,D.sc,(z.dir<0)!=!!FL[D.m],z.fade*(z.mat>0?1-z.mat/.55:1),z.fl+(z.slow>0?.12:0)+(z.haste>0?.1:0)+(z.mat>0?.4:0));
  if(z.st=='heal')healFx(z,sx);if(z.st!='dead'&&z.hp<z.mhp)bar(sx-20,z.y-z.h-(D.bh??(D.fw>100?44:50)*D.sc*.9)-6,40,z.hp/z.mhp,D.boss||D.mini?'#ff6a5a':'#e8505f')}
 /* ================= CARTES DE PERSONNAGE (rareté) ================= */
 const wsr=(sd,fn)=>{const sv=side;side=sd;try{return fn()}finally{side=sv}};
