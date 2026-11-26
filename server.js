@@ -1,5 +1,5 @@
-// Serveur Aethergard : sert le jeu + relaie les messages entre les joueurs d'une room (WebSocket) : 1v1 ou 2v2.
-const http=require('http'),fs=require('fs'),path=require('path'),crypto=require('crypto');
+// Serveur Aethergard : sert le jeu + relaie les messages entre les 2 joueurs (WebSocket).
+const http=require('http'),fs=require('fs'),path=require('path'),crypto=require('crypto'),zlib=require('zlib');
 const {WebSocketServer}=require('ws');
 const PORT=process.env.PORT||3000, ROOT=__dirname;
 const MIME={'.html':'text/html; charset=utf-8','.js':'text/javascript','.mp3':'audio/mpeg','.ogg':'audio/ogg','.png':'image/png','.json':'application/json','.css':'text/css'};
@@ -38,7 +38,7 @@ const okName=n=>/^[A-Za-z0-9_\-]{3,12}$/.test(n);
 function ipOf(req){return (req.headers['x-forwarded-for']||req.socket.remoteAddress||'?').toString().split(',')[0].trim()}
 function blocked(ip){const f=fails.get(ip);return f&&f.n>=10&&Date.now()-f.t<10*60*1000}
 function fail(ip){const f=fails.get(ip)||{n:0,t:0};if(Date.now()-f.t>10*60*1000)f.n=0;f.n++;f.t=Date.now();fails.set(ip,f)}
-function readBody(req){return new Promise((res,rej)=>{let b='';req.on('data',c=>{b+=c;if(b.length>300000){rej(new Error('big'));req.destroy()}});req.on('end',()=>res(b));req.on('error',rej)})}
+function readBody(req,max){max=max||300000;return new Promise((res,rej)=>{let b='';req.on('data',c=>{b+=c;if(b.length>max){rej(new Error('big'));req.destroy()}});req.on('end',()=>res(b));req.on('error',rej)})}
 function json(res,code,o){res.writeHead(code,{'Content-Type':'application/json','Cache-Control':'no-store'});res.end(JSON.stringify(o))}
 async function api(req,res,u){
   if(req.method!='POST')return json(res,405,{err:'POST seulement'});
@@ -102,11 +102,11 @@ function admFail(ip){const now=Date.now();if(now-admFailG.t>15*60e3)admFailG.n=0
 function admAuth(req){const t=String(req.headers['x-admin-token']||'');const e=adminSessions.get(t);if(!e)return false;if(Date.now()>e){adminSessions.delete(t);return false}return true}
 /* Catalogue utilisé par le panneau admin (à compléter quand tu ajoutes un héros / monstre / sort au jeu) : [identifiant, nom, prix] */
 const CATALOG={
-  heroes:[['el',"Soldat d'Élite",50],['ar','Archer',75],['wa','Apprenti Sorcier',100],['eb','Ebony',100],['dr','Druide',150],['che','Chevalier',250],['fi','Sorcier de feu',300],['xb','Arbalétrier',400],['li','Sorcier de foudre',500],['pa','Paladin',600],['nb','Assassin Magique',800],['kh','Héros Chevalier',800],['vi','Viking',800],['kg','Roi',1000],['sw','Manatrice (Unique)',null]],
-  monsters:[[2,'Chauve-souris',50],[1,'Étourdisseur',80],[10,'Oeil volant',80],[11,'Sporeux',100],[9,'Squelette',100],[18,'Gobelin Élite',100],[15,'Slime',250],[14,'Mimic',300],[12,'Invocateur',400],[25,'Armée Squelette',400],[13,'Général',500],[19,'Nécromancien',500],[4,'Golem de glace',700],[21,'Bourreau',900],[17,'Guardian',1000],[23,'Le Maudit',600],[24,'Aether (Unique)',null]],
+  heroes:[['el',"Soldat d'Élite",50],['ar','Archer',75],['wa','Apprenti Sorcier',100],['eb','Ebony',100],['dr','Druide',150],['che','Chevalier',250],['tw','Tour de mana',300],['fi','Sorcier de feu',300],['xb','Arbalétrier',400],['li','Sorcier de foudre',500],['pa','Paladin',600],['dk','La Duchesse',700],['nb','Assassin Magique',800],['kh','Héros Chevalier',800],['vi','Viking',800],['kg','Roi',1000],['sw','Manatrice (Unique)',null]],
+  monsters:[[2,'Chauve-souris',50],[1,'Étourdisseur',80],[10,'Oeil volant',80],[11,'Sporeux',100],[9,'Squelette',100],[18,'Gobelin Élite',100],[15,'Slime',250],[14,'Mimic',300],[12,'Invocateur',400],[25,'Armée Squelette',400],[29,'Obélisque',300],[13,'Général',500],[19,'Nécromancien',500],[4,'Golem de glace',700],[21,'Bourreau',900],[17,'Guardian',1000],[23,'Le Maudit',600],[24,'Aether (Unique)',null]],
   spells:[[0,'Foudre',100],[1,'Nécromancie',600]],
   equip:[[0,'Potion de soin',150],[1,'Cristal de rapidité',150]],
-  levels:15,arMax:10};
+  levels:18,levelsA:18,arMax:10};
 const ADD_KEYS=new Set(['coins','acoins','kKeys','ARL','OBL','AUP']),OWN_TABS=new Set(['heroOwned','aeOwned','spOwned','eqK','eqA']),LV_TABS=new Set(['lvDone','lvDoneA']);
 function cleanOps(ops){if(!Array.isArray(ops)||!ops.length||ops.length>300)return null;const out=[];
   for(const o of ops){if(!Array.isArray(o))return null;const k=o[0];
@@ -115,10 +115,66 @@ function cleanOps(ops){if(!Array.isArray(ops)||!ops.length||ops.length>300)retur
     else if(k=='lv'){const L=Math.round(Number(o[3]));if(!LV_TABS.has(o[1])||!(L>=1&&L<=99))return null;out.push(['lv',o[1],o[2]?1:0,String(L)])}
     else return null}
   return out.length?out:null}
+/* ===================== BACKUP DISCORD ===================== */
+/* URL du webhook : variable d'environnement BACKUP_WEBHOOK (Render > Environment). Ne la mets PAS dans le code (repo GitHub). */
+const BACKUP_HOOK=process.env.BACKUP_WEBHOOK||'';
+async function makeBackup(){
+  const ks=await store.keys(),all=await store.getMany(ks),accounts=[];
+  for(const k of ks)if(all[k])accounts.push(all[k]);
+  const payload={game:'aethergard',v:1,at:Date.now(),count:accounts.length,accounts};
+  return {buf:zlib.gzipSync(Buffer.from(JSON.stringify(payload))),count:accounts.length};
+}
+async function sendBackup(buf,count){
+  if(!/^https:\/\/(ptb\.|canary\.)?discord(app)?\.com\/api\/webhooks\//.test(BACKUP_HOOK))throw new Error('Webhook non configuré : ajoute la variable BACKUP_WEBHOOK dans Render > Environment.');
+  if(buf.length>9.5*1024*1024)throw new Error('Backup trop gros pour Discord (limite ~10 Mo).');
+  const stamp=new Date().toISOString().replace(/[:T]/g,'-').slice(0,19);
+  const fd=new FormData();
+  fd.append('content','Backup Aethergard : '+count+' comptes');
+  fd.append('files[0]',new Blob([buf],{type:'application/gzip'}),'aethergard-backup-'+stamp+'.json.gz');
+  const r=await fetch(BACKUP_HOOK,{method:'POST',body:fd});
+  if(!r.ok)throw new Error('Discord a refusé le fichier (code '+r.status+').');
+}
+function parseBackup(buf){
+  if(buf.length>1&&buf[0]==0x1f&&buf[1]==0x8b)buf=zlib.gunzipSync(buf,{maxOutputLength:150e6});
+  const j=JSON.parse(buf.toString('utf8'));
+  if(!j||j.game!=='aethergard'||!Array.isArray(j.accounts))throw new Error('Fichier de backup invalide');
+  return j.accounts;
+}
+function cleanAcc(a){
+  if(!a||typeof a!='object')return null;
+  const name=String(a.name||'').trim();if(!okName(name))return null;
+  if(!/^[0-9a-f]{32}$/.test(String(a.salt))||!/^[0-9a-f]{64}$/.test(String(a.hash)))return null;
+  if(a.save!=null&&(typeof a.save!='object'||JSON.stringify(a.save).length>120000))return null;
+  const sk=skinsOf(a),pend=[];
+  if(Array.isArray(a.pend))for(const g of a.pend.slice(0,50)){const ops=cleanOps(g&&g.ops);if(ops&&typeof g.id=='string')pend.push({id:g.id.slice(0,40),at:+g.at||Date.now(),ops})}
+  return {name,salt:a.salt,hash:a.hash,save:a.save||null,pend,created:+a.created||Date.now(),glow:nsIn(a.glow),tskin:sk.tskin,askin:sk.askin};
+}
+async function adminBackupRestore(res,u,b){
+  if(u=='/api/admin/backup'){
+    try{const {buf,count}=await makeBackup();
+      await sendBackup(buf,count);
+      return json(res,200,{ok:1,count,size:buf.length});
+    }catch(e){console.error('backup',e.message);return json(res,500,{err:e.message||'Erreur backup'})}
+  }
+  // restore
+  let list;try{list=parseBackup(Buffer.from(String(b.data||''),'base64'))}catch(e){return json(res,400,{err:e.message||'Fichier de backup invalide'})}
+  const overwrite=b.mode=='all';let restored=0,kept=0,bad=0;
+  for(const raw of list){
+    const acc=cleanAcc(raw);if(!acc){bad++;continue}
+    const key=acc.name.toLowerCase();
+    await withLock(key,async()=>{
+      if(!overwrite&&await store.get(key)){kept++;return}
+      await store.set(key,acc);
+      for(const [t,k] of sessions)if(k===key)sessions.delete(t);
+      restored++;
+    });
+  }
+  return json(res,200,{ok:1,restored,kept,bad,total:list.length});
+}
 async function adminApi(req,res,u){
   if(req.method!='POST')return json(res,405,{err:'POST seulement'});
   if(!ADMIN_OK)return json(res,503,{err:'Admin désactivé : définis ADMIN_PASSWORD (10 caractères minimum) dans Render > Environment.'});
-  let b;try{b=JSON.parse(await readBody(req))}catch(e){return json(res,400,{err:'Requête invalide'})}
+  let b;try{b=JSON.parse(await readBody(req,u=='/api/admin/restore'?40e6:0))}catch(e){return json(res,400,{err:'Requête invalide'})}
   const ip=ipLast(req);
   try{
     if(u=='/api/admin/login'){
@@ -138,6 +194,7 @@ async function adminApi(req,res,u){
       rows.sort((x,y)=>y.ts-x.ts||x.name.localeCompare(y.name));
       return json(res,200,{ok:1,accounts:rows});
     }
+    if(u=='/api/admin/backup'||u=='/api/admin/restore')return await adminBackupRestore(res,u,b);
     const name=String(b.name||'').trim(),key=name.toLowerCase();
     if(!okName(name))return json(res,400,{err:'Pseudo invalide'});
     if(u=='/api/admin/get'){
@@ -271,12 +328,24 @@ function effective(){var s=JSON.parse(JSON.stringify((DATA.save&&DATA.save.s)||{
   else if(k=='own'){var t=o[1];setv(t=='heroOwned'?s.heroOwned:t=='aeOwned'?s.aeOwned:t=='spOwned'?s.spOwned:t=='eqK'?s.eqOwn.k:s.eqOwn.a,o[3],o[2])}
   else if(k=='lv')setv(o[1]=='lvDoneA'?s.lvDoneA:s.lvDone,o[3],o[2])})});return s}
 function main(){var a=$('app');a.innerHTML='';
- var top=h('div',{class:'top'},[h('h1',{text:'Aethergard - Admin'}),h('span',{class:'badge '+(STORE=='upstash'?'ok':'bad'),text:'Stockage : '+STORE}),h('button',{class:'s',text:'Actualiser',onclick:function(){loadList(true)}}),h('button',{class:'s',text:'D\u00e9connexion',onclick:logout})]);a.appendChild(top);
+ var top=h('div',{class:'top'},[h('h1',{text:'Aethergard - Admin'}),h('span',{class:'badge '+(STORE=='upstash'?'ok':'bad'),text:'Stockage : '+STORE}),h('button',{class:'s',text:'Actualiser',onclick:function(){loadList(true)}}),backupUI(),h('button',{class:'s',text:'D\u00e9connexion',onclick:logout})]);a.appendChild(top);
  if(STORE!='upstash')a.appendChild(h('div',{class:'warn',text:'Attention : le stockage est en mode fichier. Les comptes (et tes modifications) disparaissent \u00e0 chaque red\u00e9ploiement de Render. Configure Upstash (voir LIRE-MOI.md).'}));
  var search=h('input',{type:'text',placeholder:'Rechercher un pseudo...'});search.oninput=function(){renderList(search.value)};
  var left=h('div',{class:'box'},[h('h2',{text:'Comptes'}),createBox(),search,h('div',{class:'list',id:'list'})]);
  var right=h('div',{class:'box',id:'detail'},[h('p',{class:'mut',text:'Choisis un compte \u00e0 gauche.'})]);
  a.appendChild(h('div',{class:'wrap'},[left,right]));loadList(false)}
+function backupUI(){
+ var mode=h('select',{title:'Mode de restauration',style:'padding:4px 8px;font-size:13px'},[h('option',{value:'missing',text:'Restaurer : comptes manquants'}),h('option',{value:'all',text:'Restaurer : tout \u00e9craser'})]),
+  file=h('input',{type:'file',accept:'.gz,.json',style:'display:none'}),
+  bb=h('button',{class:'s p',text:'Save All Backup',onclick:function(){var o=bb.textContent;bb.disabled=true;bb.textContent='Envoi...';
+   call('/api/admin/backup').then(function(j){alert('Backup envoy\u00e9e sur Discord : '+j.count+' comptes ('+Math.max(1,Math.round(j.size/1024))+' Ko).')}).catch(function(e){alert(e.message)}).then(function(){bb.disabled=false;bb.textContent=o})}}),
+  rb=h('button',{class:'s',text:'Restaurer une backup',onclick:function(){file.click()}});
+ file.onchange=function(){var f=file.files[0];file.value='';if(!f)return;if(f.size>25e6){alert('Fichier trop gros.');return}
+  var fr=new FileReader();fr.onload=function(){var u=new Uint8Array(fr.result),s='';for(var i=0;i<u.length;i+=32768)s+=String.fromCharCode.apply(null,u.subarray(i,i+32768));
+   if(!confirm('Restaurer la backup "'+f.name+'" ?\n\n'+(mode.value=='all'?'ATTENTION : les comptes existants seront \u00e9cras\u00e9s par ceux de la backup.':'Seuls les comptes manquants seront recr\u00e9\u00e9s (les existants ne sont pas touch\u00e9s).')))return;
+   rb.disabled=true;call('/api/admin/restore',{data:btoa(s),mode:mode.value}).then(function(j){alert('Restauration termin\u00e9e : '+j.restored+' compte(s) restaur\u00e9(s), '+j.kept+' d\u00e9j\u00e0 pr\u00e9sent(s) ignor\u00e9(s)'+(j.bad?', '+j.bad+' invalide(s)':'')+'.');loadList(true)}).catch(function(e){alert(e.message)}).then(function(){rb.disabled=false})};
+  fr.readAsArrayBuffer(f)};
+ return h('span',{style:'display:flex;gap:6px;align-items:center;flex-wrap:wrap'},[bb,rb,mode,file])}
 function createBox(){
  var nameI=h('input',{type:'text',placeholder:'Pseudo (3-12 caract\u00e8res)',maxlength:'12',autocomplete:'off'}),passI=h('input',{type:'text',placeholder:'Mot de passe (4 minimum)',autocomplete:'off'}),
   gcb=h('select',{}),er=h('div',{class:'err',style:'min-height:0;font-size:13px'}),form=h('div',{class:'create',style:'display:none'});NS.forEach(function(o){gcb.appendChild(h('option',{value:o[0],text:o[1]}))});
@@ -331,9 +400,10 @@ function detail(){var d=$('detail');d.innerHTML='';INIT={};var s=effective(),pen
  d.appendChild(chkBlock('Sorts',CAT.spells,s.spOwned,'sp'));
  d.appendChild(chkBlock('\u00c9quipement - Royaume',CAT.equip,s.eqOwn.k,'ek'));
  d.appendChild(chkBlock('\u00c9quipement - Aether',CAT.equip,s.eqOwn.a,'ea'));
- var lv=[];for(var i=1;i<=CAT.levels;i++)lv.push([i,'Niveau '+i]);
+ var lv=[];for(var i=1;i<=CAT.levels;i++)lv.push([i,'Niveau '+i+(i>15?' (cauchemar)':'')]);
  d.appendChild(chkBlock('Niveaux termin\u00e9s - Royaume',lv,s.lvDone,'lk'));
- d.appendChild(chkBlock('Niveaux termin\u00e9s - Aether',lv,s.lvDoneA,'la'));
+ var lvA=[];for(var j=1;j<=(CAT.levelsA||CAT.levels);j++)lvA.push([j,'Niveau '+j+(j>15?' (cauchemar)':'')]);
+ d.appendChild(chkBlock('Niveaux termin\u00e9s - Aether',lvA,s.lvDoneA,'la'));
  var msg=h('span',{id:'msg'});
  d.appendChild(h('div',{class:'sticky'},[h('button',{class:'p',text:'Envoyer les modifications',onclick:send}),msg]));
  d.appendChild(h('h3',{text:'Cadeaux en attente ('+pend.length+')'}));
@@ -371,43 +441,31 @@ const server=http.createServer((req,res)=>{
     res.writeHead(200,{'Content-Type':MIME[path.extname(f)]||'application/octet-stream'});res.end(d)});
 });
 const wss=new WebSocketServer({server,path:'/ws',maxPayload:1<<20});
-/* Rooms : 1v1 (max=2 : 1 hôte + 1 invité) ou 2v2 (max=4 : 1 hôte + 3 invités).
-   Slot 0 = hôte, slots 1..3 = invités. L'hôte est autoritaire : il envoie à tous les invités (ou à un seul avec "to"),
-   et chaque message d'un invité est transmis à l'hôte avec son numéro de slot ("from"). */
-const rooms=new Map(); // code -> {host,guests:[ws|null,...],max}
+const rooms=new Map(); // code -> {host,guest}
 function send(ws,o){if(ws&&ws.readyState==1)ws.send(JSON.stringify(o))}
 wss.on('connection',ws=>{
   ws.alive=true;
   ws.on('message',raw=>{
     let m;try{m=JSON.parse(raw)}catch(e){return}
-    if(!m||m.k=='ka')return;
+    if(m.k=='ka')return;
     if(m.k=='host'){
-      const c=String(m.code||'').toUpperCase().slice(0,8),max=m.max==4?4:2;
+      const c=String(m.code||'').toUpperCase().slice(0,8);
       if(!c||rooms.has(c))return send(ws,{k:'err',m:'Code déjà utilisé, réessaie.'});
-      rooms.set(c,{host:ws,guests:new Array(max-1).fill(null),max});ws.room=c;ws.role='host';ws.slot=0;send(ws,{k:'ok',slot:0,max});
+      rooms.set(c,{host:ws,guest:null});ws.room=c;ws.role='host';send(ws,{k:'ok'});
     }else if(m.k=='join'){
       const c=String(m.code||'').toUpperCase().slice(0,8),r=rooms.get(c);
       if(!r)return send(ws,{k:'err',m:'Room introuvable. Vérifie le code.'});
-      const i=r.guests.indexOf(null);
-      if(i<0)return send(ws,{k:'err',m:'Room pleine.'});
-      r.guests[i]=ws;ws.room=c;ws.role='guest';ws.slot=i+1;send(ws,{k:'ok',slot:i+1,max:r.max});send(r.host,{k:'peer',slot:i+1});
+      if(r.guest)return send(ws,{k:'err',m:'Room pleine.'});
+      r.guest=ws;ws.room=c;ws.role='guest';send(ws,{k:'ok'});send(r.host,{k:'peer'});
     }else if(m.k=='d'){
       const r=rooms.get(ws.room);if(!r)return;
-      if(ws.role=='host'){
-        if(Number.isInteger(m.to))send(r.guests[m.to-1],{k:'d',d:m.d});
-        else for(const g of r.guests)send(g,{k:'d',d:m.d});
-      }else send(r.host,{k:'d',d:m.d,from:ws.slot});
+      send(ws.role=='host'?r.guest:r.host,{k:'d',d:m.d});
     }
   });
   ws.on('close',()=>{
     const r=rooms.get(ws.room);if(!r)return;
-    if(ws.role=='host'){
-      for(const g of r.guests){if(!g)continue;send(g,{k:'bye'});try{g.close()}catch(e){}}
-      rooms.delete(ws.room);
-    }else{
-      if(r.guests[ws.slot-1]===ws)r.guests[ws.slot-1]=null;
-      send(r.host,{k:'bye',slot:ws.slot});
-    }
+    if(ws.role=='host'){send(r.guest,{k:'bye'});rooms.delete(ws.room);try{r.guest&&r.guest.close()}catch(e){}}
+    else{r.guest=null;send(r.host,{k:'bye'})}
   });
 });
 server.listen(PORT,()=>console.log('Aethergard relay on',PORT));
